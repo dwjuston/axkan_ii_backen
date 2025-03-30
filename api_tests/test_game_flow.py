@@ -16,6 +16,7 @@ def game_in_progress():
     """Create a game with two players and return game_id"""
     # Create first player and game
     create_response = client.post("/api/v1/games", json={"player_name": "Player1"})
+
     data1 = create_response.json()
     assert data1["status"] == "success"
     game_id = data1["data"]["game_id"]

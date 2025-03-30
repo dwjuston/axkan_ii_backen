@@ -424,3 +424,15 @@ venv/lib/python3.9/site-packages/yaml/resolver.py
 venv/lib/python3.9/site-packages/yaml/scanner.py
 venv/lib/python3.9/site-packages/yaml/serializer.py
 venv/lib/python3.9/site-packages/yaml/tokens.py
+venv/lib/python3.9/site-packages/pytest_asyncio/__init__.py
+venv/lib/python3.9/site-packages/pytest_asyncio/_version.py
+venv/lib/python3.9/site-packages/pytest_asyncio/plugin.py
+venv/lib/python3.9/site-packages/pytest_asyncio/py.typed
+venv/lib/python3.9/site-packages/pytest_asyncio-0.26.0.dist-info/entry_points.txt
+venv/lib/python3.9/site-packages/pytest_asyncio-0.26.0.dist-info/INSTALLER
+venv/lib/python3.9/site-packages/pytest_asyncio-0.26.0.dist-info/METADATA
+venv/lib/python3.9/site-packages/pytest_asyncio-0.26.0.dist-info/RECORD
+venv/lib/python3.9/site-packages/pytest_asyncio-0.26.0.dist-info/REQUESTED
+venv/lib/python3.9/site-packages/pytest_asyncio-0.26.0.dist-info/top_level.txt
+venv/lib/python3.9/site-packages/pytest_asyncio-0.26.0.dist-info/WHEEL
+venv/lib/python3.9/site-packages/pytest_asyncio-0.26.0.dist-info/licenses/LICENSE

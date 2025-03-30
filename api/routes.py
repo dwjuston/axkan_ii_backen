@@ -4,6 +4,8 @@ import uuid
 
 from enums import GameAction, GamePhase
 from game_manager import GameManager
+from notifications.broadcaster import broadcast_notification
+from notifications.models import Notification, NotificationType
 from .models import JoinGameRequest, GameMove, GameMetadata, GameResponse, GameError
 from .websocket import websocket_manager
 from player import Player
@@ -22,6 +24,7 @@ async def create_or_join_game(request: JoinGameRequest):
     If this is the first player, creates a new game.
     If this is the second player, starts the game.
     """
+
     # Find an available game with one player
     available_game_id = None
     for game_id, players in game_players.items():
@@ -45,6 +48,25 @@ async def create_or_join_game(request: JoinGameRequest):
 
         # Initialize game
         game_manager.initialize_game()
+
+        # Notify players
+        if websocket_manager is not None:
+            notification_to_p2 = Notification(
+                type=NotificationType.GAME_STARTED,
+                data={},
+                game_id=game_id,
+                target_players=[game_manager.context.players[1].player_id]
+            )
+            await broadcast_notification(notification_to_p2, websocket_manager)
+
+            notification_to_p1 = Notification(
+                type=NotificationType.GAME_STARTED_INITIAL,
+                data={},
+                game_id=game_id,
+                target_players=[game_manager.context.players[0].player_id]
+            )
+
+            await broadcast_notification(notification_to_p1, websocket_manager)
         
         return GameResponse(
             status="success",
@@ -104,20 +126,6 @@ async def websocket_endpoint(websocket: WebSocket, game_id: str):
         print(f"Error in WebSocket connection: {str(e)}")
         websocket_manager.disconnect(websocket, game_id)
 
-@router.get("/games/{game_id}/metadata", response_model=GameMetadata)
-async def get_game_metadata(game_id: str):
-    """
-    Get game metadata including:
-    - Game status (waiting/active/ended)
-    - Player names
-    - Current turn
-    - Current phase
-    """
-    # TODO: Implement metadata retrieval
-    # 1. Check if game exists
-    # 2. Return game metadata without sensitive game state
-    pass
-
 # get final results
 @router.get("/games/{game_id}/results", response_model=GameResponse)
 async def get_game_results(game_id: str):
@@ -174,6 +182,31 @@ async def make_game_move(game_id: str, move: GameMove):
         game_manager.roll_dice()
         game_manager.start_turn()
 
+        # Notify both players, Turn Start
+        if websocket_manager and game_id in websocket_manager.active_connections:
+            # get first selector
+            first_selector = game_manager.context.first_selector
+            # get board from endpoint
+            board_data1 = game_manager.context.create_board_for_player(first_selector.player_id)
+
+            notification_to_current = Notification(
+                type=NotificationType.PLAYER_SELECTING,
+                data=board_data1.dict(),
+                game_id=game_id,
+                target_players=[first_selector.player_id]
+            )
+            await broadcast_notification(notification_to_current, websocket_manager)
+
+            second_selector = game_manager.context.second_selector
+            board_data2 = game_manager.context.create_board_for_player(second_selector.player_id)
+            notification_to_opponent = Notification(
+                type=NotificationType.OPPONENT_SELECTING,
+                data=board_data2.dict(),
+                game_id=game_id,
+                target_players=[second_selector.player_id]
+            )
+            await broadcast_notification(notification_to_opponent, websocket_manager)
+
         return GameResponse(
             status="success",
             message="Dice rolled",
@@ -184,6 +217,33 @@ async def make_game_move(game_id: str, move: GameMove):
         # Check if move data is valid
         if "pair_index" not in move.move_data:
             raise HTTPException(status_code=400, detail="Invalid move data. Missing pair_index")
+
+        # Check if first selector is making the move
+        if game_manager.context.first_selector.player_id == move.player_id:
+            # notify second selector
+            if websocket_manager and game_id in websocket_manager.active_connections:
+                second_selector = game_manager.context.second_selector
+                board_data = game_manager.context.create_board_for_player(second_selector.player_id)
+                notification = Notification(
+                    type=NotificationType.OPPONENT_SELECTING,
+                    data=board_data.dict(),
+                    game_id=game_id,
+                    target_players=[second_selector.player_id]
+                )
+                await broadcast_notification(notification, websocket_manager)
+        # Check if second selector is making the move
+        else:
+            # notify both about the selection results.
+            if websocket_manager and game_id in websocket_manager.active_connections:
+                dice_roller = game_manager.context.dice_roller
+                notification_to_dice_roller = Notification(
+                    type=NotificationType.TURN_COMPLETE,
+                    data={},
+                    game_id=game_id,
+                    target_players=[dice_roller.player_id]
+                )
+                await broadcast_notification(notification_to_dice_roller, websocket_manager)
+
         game_manager.select_pair(move.move_data["pair_index"])
         return GameResponse(
             status="success",

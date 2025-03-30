@@ -19,9 +19,17 @@ class WebSocketManager:
                 del self.active_connections[game_id]
                 
     async def broadcast_to_game(self, game_id: str, message: dict):
+        print(f"Broadcasting to game {game_id}: {message}")
         if game_id in self.active_connections:
             for connection in self.active_connections[game_id]:
                 await connection.send_json(message)
+
+    async def send_to_player(self, game_id: str, player_id: str, message: dict):
+        print(f"Sending to player {player_id} in game {game_id}: {message}")
+        if game_id in self.active_connections:
+            for connection in self.active_connections[game_id]:
+                if connection.scope.get("player_id") == player_id:
+                    await connection.send_json(message)
 
 # Global WebSocket manager instance
 websocket_manager = WebSocketManager() 
