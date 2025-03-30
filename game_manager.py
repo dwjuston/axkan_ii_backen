@@ -146,4 +146,8 @@ class GameManager:
         """End the final review phase"""
         self.context.end_review()
 
+    def calculate_final_results(self) -> dict:
+        """Calculate final scores and determine the winner"""
+        return self.context.calculate_final_results()
+
         

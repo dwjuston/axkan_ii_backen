@@ -72,4 +72,12 @@ class Portfolio(BaseModel):
         if 0 <= pair_index < len(self.regular_pairs):
             self.regular_pairs[pair_index] = self.regular_pairs[pair_index].convert_big_card_color()
         elif pair_index == -1 and self.hidden_pair:
-            self.hidden_pair = self.hidden_pair.convert_big_card_color() 
+            self.hidden_pair = self.hidden_pair.convert_big_card_color()
+
+    def get_filtered_portfolio(self) -> "Portfolio":
+        """Get a filtered portfolio with hidden pair and seven cards removed."""
+        return Portfolio(
+            regular_pairs=self.regular_pairs,
+            hidden_pair=None,  # Explicitly set hidden_pair to None
+            seven_cards=self.seven_cards
+        )

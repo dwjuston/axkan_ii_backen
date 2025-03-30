@@ -4,6 +4,7 @@ from card_pile import CardPile
 from enums import GamePhase, GameAction
 from player import Player
 from dice import roll_collection, DiceCollectionType, create_dice_collection, Dice
+from board import Board
 
 class GameContext:
     def __init__(self):
@@ -223,3 +224,80 @@ class GameContext:
     def end_review(self) -> None:
         """Handle final review phase"""
         self.current_phase = GamePhase.GAME_END
+
+    def create_board_for_player(self, player_id: str) -> Board:
+        """
+        Creates a Board instance with player-specific view.
+        
+        Args:
+            player_id: ID of the player requesting the board
+            
+        Returns:
+            Board: Board instance with appropriate data visibility
+            
+        The board shows:
+        - For current player: all their data including hidden pairs
+        - For opponent: visible data only (no hidden pairs)
+        - Common game state: available pairs, selected pairs, roles
+        """
+        # Find current player and opponent
+        current_player = next((p for p in self.players if p.player_id == player_id), None)
+        if not current_player:
+            raise ValueError(f"Player {player_id} not found in game")
+            
+        opponent = next((p for p in self.players if p.player_id != player_id), None)
+        if not opponent:
+            raise ValueError("No opponent found")
+            
+        # Create filtered opponent view (without hidden pairs)
+        opponent_view = Player(
+            player_id=opponent.player_id,
+            portfolio=opponent.portfolio.get_filtered_portfolio(),
+            has_selected=opponent.has_selected,
+            current_score=opponent.current_score
+        )
+        
+        return Board(
+            dice_result=0,  # Current stock price
+            stock_price=self.current_price,  # Will be None initially
+            turn_number=self.current_turn,
+            available_pairs=self.available_pairs,
+            first_selector=self.first_selector.player_id if self.first_selector else "",
+            second_selector=self.second_selector.player_id if self.second_selector else "",
+            dice_roller=self.dice_roller.player_id if self.dice_roller else "",
+            current_player=current_player,
+            opponent=opponent_view,
+            current_phase=self.current_phase,
+            selected_pairs=self.selected_pairs
+        )
+
+    def calculate_final_results(self) -> Dict[str, int]:
+        """
+        Get final game results including:
+        - Player scores
+        - Winner
+        - Stock Price
+        - Selected Pairs
+        - Hidden Pair
+        """
+        results = {}
+        # stock price
+        results["stock_price"] = self.current_price
+        # player 1 data: selected pairs, hidden pair, current score, cost, pnl
+        for player in self.players:
+            player.recalculate_score(self.current_price)
+            results[player.player_id] = {
+                "selected_pairs": [pair.dict() for pair in player.selected_pairs],
+                "hidden_pair": player.hidden_pairs[0].dict(),
+                "current_score": player.portfolio.get_total_value(self.current_price),
+                "cost": player.portfolio.total_cost,
+                "pnl": player.portfolio.get_pnl(self.current_price)
+            }
+        # winner
+        if self.players[0].current_score > self.players[1].current_score:
+            results["winner"] = self.players[0].player_id
+        elif self.players[0].current_score < self.players[1].current_score:
+            results["winner"] = self.players[1].player_id
+        else:
+            results["winner"] = "Tie"
+        return results

@@ -13,7 +13,12 @@ class Player(BaseModel):
     portfolio: Portfolio = Field(default_factory=Portfolio)
     has_selected: bool = False  # Track if player has made their selection for current turn
     current_score: int = 0  # Track player's current score
-    
+
+    @property
+    def cost(self) -> int:
+        """Get total cost of selected pairs."""
+        return self.portfolio.get_total_cost()
+
     @property
     def selected_pairs(self) -> List[CardPair]:
         """Get list of selected pairs."""
