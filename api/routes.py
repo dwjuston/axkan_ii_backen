@@ -83,12 +83,25 @@ async def create_or_join_game(request: JoinGameRequest):
 
 @router.websocket("/games/{game_id}/ws")
 async def websocket_endpoint(websocket: WebSocket, game_id: str):
+    # Check if game exists
+    if game_id not in game_sessions:
+        await websocket.close(code=4004, reason="Game not found")
+        return
+        
+    # Accept the connection
+    await websocket.accept()
+    
+    # Register the connection with the WebSocket manager
     await websocket_manager.connect(websocket, game_id)
+    
     try:
         while True:
             data = await websocket.receive_text()
             # Handle incoming messages if needed
     except WebSocketDisconnect:
+        websocket_manager.disconnect(websocket, game_id)
+    except Exception as e:
+        print(f"Error in WebSocket connection: {str(e)}")
         websocket_manager.disconnect(websocket, game_id)
 
 @router.get("/games/{game_id}/metadata", response_model=GameMetadata)
