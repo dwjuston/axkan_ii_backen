@@ -67,6 +67,7 @@ async def create_or_join_game(request: JoinGameRequest):
             )
 
             await broadcast_notification(notification_to_p1, websocket_manager)
+
         
         return GameResponse(
             status="success",
@@ -104,14 +105,26 @@ async def create_or_join_game(request: JoinGameRequest):
         )
 
 @router.websocket("/games/{game_id}/ws")
-async def websocket_endpoint(websocket: WebSocket, game_id: str):
+async def websocket_endpoint(
+    websocket: WebSocket,
+    game_id: str,
+    player_id: str = Query(..., description="ID of the player connecting")
+):
     # Check if game exists
     if game_id not in game_sessions:
         await websocket.close(code=4004, reason="Game not found")
         return
+
+    # Check if player is part of the game
+    if game_id not in game_players or player_id not in game_players[game_id]:
+        await websocket.close(code=4003, reason="Player not part of this game")
+        return
         
     # Accept the connection
     await websocket.accept()
+    
+    # Store player_id in the connection scope
+    websocket.scope["player_id"] = player_id
     
     # Register the connection with the WebSocket manager
     await websocket_manager.connect(websocket, game_id)

@@ -46,10 +46,12 @@ def test_websocket_connection():
     # First create a game
     create_response = client.post("/api/v1/games", json={"player_name": "Player1"})
     assert create_response.status_code == 200
-    game_id = create_response.json()["data"]["game_id"]
+    game_data = create_response.json()["data"]
+    game_id = game_data["game_id"]
+    player_id = game_data["player_id"]
     
-    # Test WebSocket connection
-    with client.websocket_connect(f"/api/v1/games/{game_id}/ws") as websocket:
+    # Test WebSocket connection with player_id
+    with client.websocket_connect(f"/api/v1/games/{game_id}/ws?player_id={player_id}") as websocket:
         # Send a test message to verify connection
         websocket.send_text("test")
         # If no exception is raised, the connection was successful 
