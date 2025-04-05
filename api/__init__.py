@@ -4,7 +4,7 @@ from typing import Optional
 from fastapi import FastAPI, Depends
 from fastapi.security import APIKeyHeader
 from fastapi import HTTPException, Security, status
-from .routes import router
+from .routes import router, ws_router
 import os
 
 api_key_internal = os.getenv("API_KEY_INTERNAL")
@@ -23,4 +23,5 @@ async def check_api_key(api_key_header: str = Security(API_KEY_HEADER)) -> bool:
 
 app = FastAPI(title="Axkan II Game API")
 app.include_router(router, prefix="/api/v1", dependencies=[Security(check_api_key)])
+app.include_router(ws_router, prefix="/api/v1")
 

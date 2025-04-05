@@ -3,7 +3,7 @@ import asyncio
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect, Query
 from typing import Dict, List, Optional
 import uuid
-import json
+import api
 
 from board import Board
 from enums import GameAction, GamePhase
@@ -15,6 +15,7 @@ from player import Player, PlayerView
 
 
 router = APIRouter()
+ws_router = APIRouter()
 
 # In-memory storage for game sessions
 game_sessions: Dict[str, GameManager] = {}
@@ -210,12 +211,15 @@ async def convert_color(game_id: str, player_uuid: str, pair_index: int, special
         player_uuid=player_uuid
     )
 
-@router.websocket("/games/ws")
+@ws_router.websocket("/games/ws")
 async def websocket_endpoint(
     websocket: WebSocket,
     game_id: str,
     player_uuid: str = Query(..., description="ID of the player connecting")
 ):
+    api_key = websocket.query_params.get("API_KEY_INTERNAL")
+    await api.check_api_key(api_key)
+
     async def message_task():
         try:
             while True:
