@@ -3,14 +3,15 @@ Card module for handling cards and card pairs in the game.
 """
 from enum import Enum, auto
 from typing import Optional
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, validator, computed_field
+
 
 class CardSuit(Enum):
     """Types of card suits."""
-    HEARTS = auto()
-    DIAMONDS = auto()
-    SPADES = auto()
-    CLUBS = auto()
+    HEARTS = "heart"
+    DIAMONDS = "diamond"
+    SPADES = "spade"
+    CLUBS = "club"
 
 class CardRank(Enum):
     """Card ranks from Ace to King."""
@@ -30,15 +31,30 @@ class CardRank(Enum):
 
 class CardType(Enum):
     """Types of cards based on rank."""
-    SMALL = auto()  # A-6
-    BIG = auto()    # 8-K
-    SPECIAL = auto() # 7
+    SMALL = "small"  # A-6
+    BIG = "big"  # 8-K
+    SPECIAL = "special"  # 7
 
 class Card(BaseModel):
     """Represents a single card in the game."""
     suit: CardSuit
     rank: CardRank
-    card_type: CardType
+
+    def __repr__(self) -> str:
+        return f"{self.rank.name} {self.suit.name}"
+
+    def __str__(self) -> str:
+        return f"{self.rank.name} {self.suit.name}"
+
+    @property
+    def card_type(self) -> CardType:
+        """Get card type based on rank."""
+        if self.rank == CardRank.SEVEN:
+            return CardType.SPECIAL
+        elif self.rank.value <= 6:
+            return CardType.SMALL
+        else:
+            return CardType.BIG
     
     @property
     def is_red(self) -> bool:
@@ -52,8 +68,8 @@ class Card(BaseModel):
     
     def get_value(self, stock_price: int) -> int:
         """Calculate card value based on stock price."""
-        if self.rank == CardRank.SEVEN:
-            return 0  # Special card, no value
+        if self.card_type in [CardType.SMALL, CardType.SPECIAL]:
+            raise ValueError("Seven card value is not available")
             
         rank_value = self.rank.value
         if self.is_red:
@@ -69,12 +85,18 @@ class Card(BaseModel):
             CardSuit.DIAMONDS: CardSuit.CLUBS,
             CardSuit.CLUBS: CardSuit.DIAMONDS
         }[self.suit]
-        return Card(suit=new_suit, rank=self.rank, card_type=self.card_type)
+        return Card(suit=new_suit, rank=self.rank)
 
 class CardPair(BaseModel):
     """Represents a pair of cards (small + big)."""
     small_card: Card
     big_card: Card
+
+    def __repr__(self) -> str:
+        return f"[{self.big_card} | {self.small_card} ({self.breakeven})]"
+
+    def __str__(self) -> str:
+        return f"[{self.big_card} | {self.small_card} ({self.breakeven})]"
     
     @validator('small_card')
     def validate_small_card(cls, v):
@@ -115,11 +137,8 @@ class CardPair(BaseModel):
         """Calculate pair value based on stock price."""
         return self.big_card.get_value(stock_price)
     
-    def get_breakeven_price(self) -> Optional[int]:
+    def get_breakeven_price(self) -> int:
         """Calculate breakeven price for this pair."""
-        if self.big_card.rank == CardRank.SEVEN:
-            return None
-            
         small_rank = self.small_card.rank.value
         big_rank = self.big_card.rank.value
         
@@ -127,13 +146,13 @@ class CardPair(BaseModel):
             return big_rank + small_rank  # >= X
         else:  # black
             return big_rank - small_rank  # <= X
-    
-    def get_breakeven_price_str(self) -> Optional[str]:
+
+
+    @computed_field
+    @property
+    def breakeven(self) -> str:
         """Get breakeven price with >= or <= prefix."""
         price = self.get_breakeven_price()
-        if price is None:
-            return None
-            
         if self.big_card.is_red:
             return f">={price}"
         else:  # black

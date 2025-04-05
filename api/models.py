@@ -21,8 +21,18 @@ class GameMetadata(BaseModel):
 
 class GameResponse(BaseModel):
     status: str
-    message: Optional[str]
-    data: Optional[dict]
+    game_id: str
+    player_uuid: str
+
+class PlayerMetadata(BaseModel):
+    game_id: str
+    player_uuid: str
+    player_name: str
+    opponent_uuid: Optional[str]
+    opponent_name: Optional[str]
+
+class GameMessage(BaseModel):
+    board: Board
 
 class GameError(BaseModel):
     status: str = "error"

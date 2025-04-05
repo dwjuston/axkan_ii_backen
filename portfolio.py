@@ -7,21 +7,26 @@ from card import Card, CardPair
 
 class Portfolio(BaseModel):
     regular_pairs: List[CardPair] = Field(default_factory=list)  # Pairs selected during turns
-    hidden_pair: Optional[CardPair] = None  # Hidden pair from game start
+    hidden_pairs: List[CardPair] = Field(default_factory=list)  # Hidden pair selected during turn 7
     seven_cards: List[Card] = Field(default_factory=list)  # Seven cards for special actions
-    
-    @property
-    def total_cost(self) -> int:
+
+    def get_cost(self, include_hidden: bool = True) -> int:
         """Calculate total cost of all pairs."""
-        return sum(pair.cost for pair in self.get_all_pairs())
+        cost = sum([pair.cost for pair in self.regular_pairs])
+        if include_hidden:
+            return cost + sum([pair.cost for pair in self.hidden_pairs])
+        return cost
         
-    def get_total_value(self, stock_price: int) -> int:
+    def get_value(self, stock_price: int, include_hidden: bool = True) -> int:
         """Calculate total value based on given stock price."""
-        return sum(pair.get_value(stock_price) for pair in self.get_all_pairs())
+        value = sum([pair.get_value(stock_price) for pair in self.regular_pairs])
+        if include_hidden:
+            return value + sum([pair.get_value(stock_price) for pair in self.hidden_pairs])
+        return value
         
-    def get_pnl(self, stock_price: int) -> int:
+    def get_pnl(self, stock_price: int, include_hidden: bool = True) -> int:
         """Calculate profit and loss (total value - total cost)."""
-        return self.get_total_value(stock_price) - self.total_cost
+        return self.get_value(stock_price, include_hidden) - self.get_cost(include_hidden)
         
     def add_pair(self, pair: CardPair) -> None:
         """Add a regular pair to the portfolio."""
@@ -29,55 +34,38 @@ class Portfolio(BaseModel):
             
     def add_hidden_pair(self, pair: CardPair) -> None:
         """Add a hidden pair to the portfolio."""
-        self.hidden_pair = pair
-            
-    def get_selected_pairs(self) -> List[CardPair]:
-        """Get all regular (non-hidden) pairs."""
-        return self.regular_pairs.copy()
-        
-    def get_hidden_pairs(self) -> List[CardPair]:
-        """Get hidden pairs as a list."""
-        return [self.hidden_pair] if self.hidden_pair else []
-        
-    def get_all_pairs(self) -> List[CardPair]:
-        """Get all pairs including hidden pair."""
-        pairs = self.regular_pairs.copy()
-        if self.hidden_pair:
-            pairs.append(self.hidden_pair)
-        return pairs
+        self.hidden_pairs.append(pair)
+
         
     def add_seven_card(self, card: Card) -> None:
         """Add a seven card to the portfolio."""
-        if card.rank.value == 7:
-            self.seven_cards.append(card)
+        if card.rank.value != 7:
+            raise ValueError("Card must be a seven card")
+        self.seven_cards.append(card)
             
-    def use_seven_card(self, special_card: Card) -> Optional[Card]:
+    def remove_seven_card(self, special_card: Card) -> None:
         """Use and remove a seven card if available."""
+        flag = False
         for card in self.seven_cards:
             if card == special_card:
                 self.seven_cards.remove(card)
-                return card
-        return None
+                flag = True
+        if not flag:
+            raise ValueError("Card not found in seven cards")
         
     def has_seven_card(self) -> bool:
         """Check if portfolio has any seven cards."""
         return bool(self.seven_cards)
         
-    def get_seven_cards(self) -> List[Card]:
-        """Get list of available seven cards."""
-        return self.seven_cards.copy()
-        
     def convert_pair_color(self, pair_index: int) -> None:
         """Convert color of a specific pair (for turn 8)."""
         if 0 <= pair_index < len(self.regular_pairs):
             self.regular_pairs[pair_index] = self.regular_pairs[pair_index].convert_big_card_color()
-        elif pair_index == -1 and self.hidden_pair:
-            self.hidden_pair = self.hidden_pair.convert_big_card_color()
+        elif pair_index == -1 and len(self.hidden_pairs) >= 1:
+            self.hidden_pairs[0] = self.hidden_pairs[0].convert_big_card_color()
 
-    def get_filtered_portfolio(self) -> "Portfolio":
-        """Get a filtered portfolio with hidden pair and seven cards removed."""
-        return Portfolio(
-            regular_pairs=self.regular_pairs,
-            hidden_pair=None,  # Explicitly set hidden_pair to None
-            seven_cards=self.seven_cards
-        )
+    def reset(self) -> None:
+        """Reset portfolio for a new game."""
+        self.regular_pairs = []
+        self.hidden_pairs = []
+        self.seven_cards = []

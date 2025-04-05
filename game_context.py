@@ -1,10 +1,49 @@
+import random
 from typing import List, Optional, Dict
+
+from pydantic import BaseModel
+
 from card import CardPair, Card
 from card_pile import CardPile
 from enums import GamePhase, GameAction
-from player import Player
+from player import Player, PlayerView
 from dice import roll_collection, DiceCollectionType, create_dice_collection, Dice
 from board import Board
+
+class GameResult(BaseModel):
+    winner: int
+    stock_price: int
+    player_1: PlayerView
+    player_2: PlayerView
+
+    @staticmethod
+    def create_sample():
+        return {
+            'winner': 1,
+            'stock_price': 10,
+            'player_1': {
+                'uuid': '2',
+                'name': 'Player 2',
+                'player_id': 2,
+                'selected_pairs': [],
+                'seven_cards': [],
+                'pnl': 0,
+                'cost': 0,
+                'value': 0
+            },
+            'player_2': {
+                'uuid': '1',
+                'name': 'Player 1',
+                'player_id': 1,
+                'selected_pairs': [],
+                'seven_cards': [],
+                'pnl': 0,
+                'cost': 0,
+                'value': 0
+            }
+        }
+
+
 
 class GameContext:
     def __init__(self):
@@ -12,11 +51,34 @@ class GameContext:
         self.players: List[Player] = []
         self.card_pile: Optional[CardPile] = None
         self.available_pairs: List[CardPair] = []
-        self.selected_pairs: List[CardPair] = []
+        self.selected_pair_index: Dict[str, int] = {}
         self.initial_price: Optional[int] = None
         self.current_price: Optional[int] = None
         self.current_turn: int = 1
         self.first_selector: Optional[Player] = None  # Track who selects first in current turn
+        self.dice_result: list[int] = []
+        self.dice_extra: int = 0
+
+    def create_board(self, player_id: int) -> Board:
+        current_player = self.player_1 if player_id == 0 else self.player_2
+        opponent_player = self.player_2 if player_id == 0 else self.player_1
+
+        board = Board(
+            current_phase=self.current_phase,
+            turn_number=self.current_turn,
+            dice_result=self.dice_result,
+            dice_extra=self.dice_extra,
+            stock_price=self.current_price,
+            first_selector=self.first_selector.player_id if self.first_selector else None,
+            second_selector=self.second_selector.player_id if self.second_selector else None,
+            dice_roller=self.dice_roller.player_id if self.dice_roller else None,
+            available_pairs=self.available_pairs,
+            selected_pair_index=self.selected_pair_index,
+            current_player=current_player.get_player_view(self.current_price),
+            opponent=opponent_player.get_opponent_view(self.current_price)
+        )
+
+        return board
 
     @property
     def second_selector(self) -> Optional[Player]:
@@ -32,13 +94,7 @@ class GameContext:
 
     def get_current_player(self) -> Optional[Player]:
         """Get the current player based on game phase"""
-        if not self.players:
-            return None
-            
-        # Lobby phase
-        if self.current_phase == GamePhase.LOBBY:
-            if len(self.players) == 1:
-                return self.players[0]  # Player 1 is waiting for Player 2
+        if not self.players or len(self.players) < 2:
             return None
             
         # Game phases
@@ -48,52 +104,56 @@ class GameContext:
             return self.first_selector  # First selector (P1 in odd turns, P2 in even turns)
         elif self.current_phase == GamePhase.TURN_SELECT_SECOND:
             # Second selector is the other player
-            return self.players[1] if self.first_selector == self.players[0] else self.players[0]
+            return self.second_selector
         elif self.current_phase == GamePhase.TURN_COMPLETE:
             # Second selector is responsible for rolling dice
-            return self.players[1] if self.first_selector == self.players[0] else self.players[0]
+            return self.dice_roller
         return None
 
     def start_turn(self) -> None:
         """Handle automatic turn start actions"""
-        # if last turn, skip to TURN_COMPLETE
-        if self.is_last_turn():
-            self.current_phase = GamePhase.FINAL_REVIEW
-            return
-
+        if self.current_phase != GamePhase.TURN_START:
+            raise ValueError("Invalid phase to start turn")
 
         # Determine first selector based on turn number
-        self.first_selector = self.players[0] if self.current_turn % 2 == 1 else self.players[1]
-        
+        mod = self.current_turn % 2
+        # 1,3,5,7: P1 selects first
+        self.first_selector = self.player_1 if mod == 1 else self.player_2
+
         # Draw new pairs
-        self.selected_pairs = []
+        self.selected_pair_index = {}
         self.available_pairs = self.draw_pairs()
-        
-        # Recalculate scores for all players
-        for player in self.players:
-            player.recalculate_score(self.current_price)
-            
+
         # Move to selection phase
         self.current_phase = GamePhase.TURN_SELECT_FIRST
+
+    def start_review(self) -> None:
+        if self.current_phase != GamePhase.FINAL_REVIEW:
+            raise ValueError("Invalid phase to start review")
+
+        # Move to review phase
+        self.selected_pair_index = {}
+        self.available_pairs = []
+
 
     def roll_dice(self, dice_collection_type: DiceCollectionType = DiceCollectionType.REGULAR) -> None:
         """Handle dice rolling and price update"""
         if self.current_phase == GamePhase.GAME_INIT:
             # Roll dice and set initial price
-            _, roll_result = roll_collection(DiceCollectionType.INITIAL)
+            # = roll_collection(DiceCollectionType.INITIAL)
+            roll_result, dice_result, dice_extra = roll_collection(DiceCollectionType.INITIAL)
             self.set_initial_price(roll_result)
+            self.dice_result = dice_result
+            self.dice_extra = dice_extra
             self.current_phase = GamePhase.TURN_START
             return
             
         elif self.current_phase == GamePhase.TURN_COMPLETE:
             # Roll dice and update price
-            _, roll_result = roll_collection(dice_collection_type)
-
+            roll_result, dice_result, dice_extra = roll_collection(dice_collection_type)
+            self.dice_result = dice_result
+            self.dice_extra = dice_extra
             self.update_price(roll_result)
-
-            # Reset Turn State for both players
-            for player in self.players:
-                player.reset_turn_state()
             
         # Move to next turn
         if not self.is_last_turn():
@@ -138,6 +198,22 @@ class GameContext:
             return self.current_phase == GamePhase.GAME_END
         return False
 
+    @property
+    def player_1(self) -> Optional[Player]:
+        # check player_id == 0
+        for player in self.players:
+            if player.player_id == 0:
+                return player
+        return None
+
+    @property
+    def player_2(self) -> Optional[Player]:
+        # check player_id == 1
+        for player in self.players:
+            if player.player_id == 1:
+                return player
+        return None
+
     def add_player(self, player: Player) -> bool:
         """Add a player to the game"""
         if len(self.players) < 2:
@@ -150,6 +226,21 @@ class GameContext:
     def initialize_game(self):
         """Initialize game components according to rules"""
         self.card_pile = CardPile()
+        self.current_turn = 1
+        self.current_phase = GamePhase.GAME_INIT
+        self.current_price = None
+        self.initial_price = None
+        self.dice_result = []
+        self.dice_extra = 0
+
+        # flip a coin to determine who has player id 1 or 0
+        rand = random.randint(0, 1)
+        self.players[0].player_id = rand
+        self.players[1].player_id = 1 - rand
+
+        # reset portfolio
+        for player in self.players:
+            player.portfolio.reset()
 
         # Draw hidden pairs for each player
         for i in range(2):
@@ -183,15 +274,9 @@ class GameContext:
         elif self.current_price > 20:
             self.current_price -= 20
 
-    def get_available_pairs_for_p2(self) -> List[CardPair]:
-        """Get available pairs for Player 2 after Player 1's selection"""
-        if not self.selected_pairs:
-            return self.available_pairs
-        return [pair for pair in self.available_pairs if pair != self.selected_pairs[-1]]
-
     def is_last_turn(self) -> bool:
         """Check if this is the last turn"""
-        return self.current_turn >= 8
+        return self.current_turn >= 7
 
     def select_pair(self, pair: CardPair) -> bool:
         """Handle pair selection and state transition"""
@@ -200,78 +285,24 @@ class GameContext:
             return False
             
         if self.current_phase == GamePhase.TURN_SELECT_FIRST:
-            if current_player.select_pair(pair):
-                self.selected_pairs.append(pair)
-                self.available_pairs.remove(pair)
-                self.current_phase = GamePhase.TURN_SELECT_SECOND
-                return True
+            print(f"{current_player.name} selected {pair}")
+            current_player.select_pair(pair)
+            self.selected_pair_index[current_player.uuid] = self.available_pairs.index(pair)
+            self.current_phase = GamePhase.TURN_SELECT_SECOND
+            return True
         elif self.current_phase == GamePhase.TURN_SELECT_SECOND:
-            if current_player.select_pair(pair):
-                self.selected_pairs.append(pair)
-                self.available_pairs.remove(pair)
-                self.current_phase = GamePhase.TURN_COMPLETE
-                return True
+            print(f"{current_player.name} selected {pair}")
+            current_player.select_pair(pair)
+            self.selected_pair_index[current_player.uuid] = self.available_pairs.index(pair)
+            self.current_phase = GamePhase.TURN_COMPLETE
+            return True
         return False
-
-    def complete_turn(self) -> None:
-        """Handle turn completion and transition to next turn"""
-        self.current_turn += 1
-        if self.is_last_turn():
-            self.current_phase = GamePhase.FINAL_REVIEW
-        else:
-            self.start_turn()  # Automatically start next turn
 
     def end_review(self) -> None:
         """Handle final review phase"""
         self.current_phase = GamePhase.GAME_END
 
-    def create_board_for_player(self, player_id: str) -> Board:
-        """
-        Creates a Board instance with player-specific view.
-        
-        Args:
-            player_id: ID of the player requesting the board
-            
-        Returns:
-            Board: Board instance with appropriate data visibility
-            
-        The board shows:
-        - For current player: all their data including hidden pairs
-        - For opponent: visible data only (no hidden pairs)
-        - Common game state: available pairs, selected pairs, roles
-        """
-        # Find current player and opponent
-        current_player = next((p for p in self.players if p.player_id == player_id), None)
-        if not current_player:
-            raise ValueError(f"Player {player_id} not found in game")
-            
-        opponent = next((p for p in self.players if p.player_id != player_id), None)
-        if not opponent:
-            raise ValueError("No opponent found")
-            
-        # Create filtered opponent view (without hidden pairs)
-        opponent_view = Player(
-            player_id=opponent.player_id,
-            portfolio=opponent.portfolio.get_filtered_portfolio(),
-            has_selected=opponent.has_selected,
-            current_score=opponent.current_score
-        )
-        
-        return Board(
-            dice_result=0,  # Current stock price
-            stock_price=self.current_price,  # Will be None initially
-            turn_number=self.current_turn,
-            available_pairs=self.available_pairs,
-            first_selector=self.first_selector.player_id if self.first_selector else "",
-            second_selector=self.second_selector.player_id if self.second_selector else "",
-            dice_roller=self.dice_roller.player_id if self.dice_roller else "",
-            current_player=current_player,
-            opponent=opponent_view,
-            current_phase=self.current_phase,
-            selected_pairs=self.selected_pairs
-        )
-
-    def calculate_final_results(self) -> Dict[str, int]:
+    def calculate_final_results(self) -> GameResult:
         """
         Get final game results including:
         - Player scores
@@ -280,24 +311,27 @@ class GameContext:
         - Selected Pairs
         - Hidden Pair
         """
-        results = {}
-        # stock price
-        results["stock_price"] = self.current_price
-        # player 1 data: selected pairs, hidden pair, current score, cost, pnl
-        for player in self.players:
-            player.recalculate_score(self.current_price)
-            results[player.player_id] = {
-                "selected_pairs": [pair.dict() for pair in player.selected_pairs],
-                "hidden_pair": player.hidden_pairs[0].dict(),
-                "current_score": player.portfolio.get_total_value(self.current_price),
-                "cost": player.portfolio.total_cost,
-                "pnl": player.portfolio.get_pnl(self.current_price)
-            }
+        game_result = GameResult(
+            winner=-1,
+            stock_price=self.current_price,
+            player_1=self.player_1.get_player_view(self.current_price),
+            player_2=self.player_2.get_player_view(self.current_price)
+        )
+
         # winner
-        if self.players[0].current_score > self.players[1].current_score:
-            results["winner"] = self.players[0].player_id
-        elif self.players[0].current_score < self.players[1].current_score:
-            results["winner"] = self.players[1].player_id
+        player1_score = game_result.player_1.pnl
+        player2_score = game_result.player_2.pnl
+
+        if player1_score > player2_score:
+            game_result.winner = 0
+        elif player1_score < player2_score:
+            game_result.winner = 1
         else:
-            results["winner"] = "Tie"
-        return results
+            game_result.winner = -1
+        return game_result
+
+    def convert_color(self, player_id: int, pair_index: int, special_card_index: int) -> bool:
+        """Convert color of a pair for a player"""
+        player = self.player_1 if player_id == 0 else self.player_2
+        pair = player.portfolio.regular_pairs[pair_index] if pair_index >= 0 else player.hidden_pair
+        return player.convert_card_color(pair, special_card_index)

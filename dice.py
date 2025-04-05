@@ -7,14 +7,14 @@ from typing import List, Tuple
 
 class DiceCollectionType(Enum):
     """Types of dice collections available in the game."""
-    INITIAL = auto()      # 1 positive
-    REGULAR = auto()      # 1 positive, 1 negative
-    INFLATION = auto()    # 2 positive, 1 negative
-    TAPERING = auto()     # 1 positive, 2 negative
-    STIMULUS = auto()     # 1 positive
-    TARIFF = auto()       # 1 negative
-    BULLISH = auto()      # 1 positive, 1 negative, result +1
-    BEARISH = auto()      # 1 positive, 1 negative, result -1
+    INITIAL = "initial"      # 1 positive
+    REGULAR = "regular"      # 1 positive, 1 negative
+    INFLATION = "inflation"    # 2 positive, 1 negative
+    TAPERING = "tapering"     # 1 positive, 2 negative
+    STIMULUS = "stimulus"     # 1 positive
+    TARIFF = "tariff"       # 1 negative
+    SOFT_LANDING = "soft_landing"      # 1 positive, 1 negative, result +1
+    SUPPLY_SHOCK = "supply_shock"      # 1 positive, 1 negative, result -1
 
 class Dice:
     """Represents a single die that can be positive or negative."""
@@ -67,34 +67,33 @@ def create_dice_collection(collection_type: DiceCollectionType) -> List[Dice]:
         return [Dice(is_positive=True)]
     elif collection_type == DiceCollectionType.TARIFF:
         return [Dice(is_positive=False)]
-    elif collection_type in (DiceCollectionType.BULLISH, DiceCollectionType.BEARISH):
+    elif collection_type in (DiceCollectionType.SOFT_LANDING, DiceCollectionType.SUPPLY_SHOCK):
         return [Dice(is_positive=True), Dice(is_positive=False)]
     elif collection_type == DiceCollectionType.INITIAL:
         return [Dice(is_positive=True)]
     raise ValueError(f"Unknown collection type: {collection_type}")
 
-def roll_collection(collection_type: DiceCollectionType) -> Tuple[List[int], int]:
+def roll_collection(collection_type: DiceCollectionType) -> tuple[int, List[int], int]:
     """
     Roll all dice and return list of values and total sum.
     
     Args:
-        dice_list: List of dice to roll
-        collection_type: Type of dice collection
-        
+        collection_type: Type of dice collection to roll
+
     Returns:
-        Tuple[List[int], int]: (list of values, total sum)
+        tuple[int, List[int], int]: Total sum, list of values, extra modifier
     """
     dice_list = create_dice_collection(collection_type)
-    values = [dice.roll() for dice in dice_list]
-    
+    values = [dice.roll() if dice.is_positive else -dice.roll() for dice in dice_list]
     # Calculate base sum
-    total = sum(value if dice.is_positive else -value 
-                for value, dice in zip(values, dice_list))
+    total = sum(values)
     
     # Apply special modifiers
-    if collection_type == DiceCollectionType.BULLISH:
-        total += 1
-    elif collection_type == DiceCollectionType.BEARISH:
-        total -= 1
+    extra = 0
+    if collection_type == DiceCollectionType.SOFT_LANDING:
+        extra = 1
+    elif collection_type == DiceCollectionType.SUPPLY_SHOCK:
+        extra = -1
+    total += extra
         
-    return values, total 
+    return total, values, extra

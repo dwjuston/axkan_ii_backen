@@ -64,13 +64,13 @@ def test_create_dice_collection():
     assert tariff[0].is_positive is False
     
     # Test bullish collection
-    bullish = create_dice_collection(DiceCollectionType.BULLISH)
+    bullish = create_dice_collection(DiceCollectionType.SOFT_LANDING)
     assert len(bullish) == 2
     assert bullish[0].is_positive is True
     assert bullish[1].is_positive is False
     
     # Test bearish collection
-    bearish = create_dice_collection(DiceCollectionType.BEARISH)
+    bearish = create_dice_collection(DiceCollectionType.SUPPLY_SHOCK)
     assert len(bearish) == 2
     assert bearish[0].is_positive is True
     assert bearish[1].is_positive is False
@@ -81,38 +81,40 @@ def test_roll_collection():
         mock_randint.return_value = 4
         
         # Test regular collection
-        values, total = roll_collection(DiceCollectionType.REGULAR)
-        assert values == [4, 4]
+        total, values, extra = roll_collection(DiceCollectionType.REGULAR)
+        assert values == [4, -4]
         assert total == 0  # 4 - 4 = 0
+        assert extra == 0
         
         # Test inflation collection
-        values, total = roll_collection(DiceCollectionType.INFLATION)
-        assert values == [4, 4, 4]
+        total, values, extra = roll_collection(DiceCollectionType.INFLATION)
+        assert values == [4, 4, -4]
         assert total == 4  # 4 + 4 - 4 = 4
         
         # Test tapering collection
-        values, total = roll_collection(DiceCollectionType.TAPERING)
-        assert values == [4, 4, 4]
+        total, values, extra = roll_collection(DiceCollectionType.TAPERING)
+        assert values == [4, -4, -4]
         assert total == -4  # 4 - 4 - 4 = -4
         
         # Test stimulus collection
-        values, total = roll_collection(DiceCollectionType.STIMULUS)
+        total, values, extra = roll_collection(DiceCollectionType.STIMULUS)
         assert values == [4]
         assert total == 4
         
         # Test tariff collection
-        values, total = roll_collection(DiceCollectionType.TARIFF)
-        assert values == [4]
+        total, values, extra = roll_collection(DiceCollectionType.TARIFF)
+        assert values == [-4]
         assert total == -4
         
         # Test bullish collection
-        values, total = roll_collection(DiceCollectionType.BULLISH)
-        assert values == [4, 4]
+        total, values, extra = roll_collection(DiceCollectionType.SOFT_LANDING)
+        assert values == [4, -4]
         assert total == 1  # (4 - 4) + 1 = 1
         
         # Test bearish collection
-        values, total = roll_collection(DiceCollectionType.BEARISH)
-        assert values == [4, 4]
+        total, values, extra = roll_collection(DiceCollectionType.SUPPLY_SHOCK
+                                               )
+        assert values == [4, -4]
         assert total == -1  # (4 - 4) - 1 = -1
 
 def test_invalid_collection_type():

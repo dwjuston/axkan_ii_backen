@@ -1,3 +1,6 @@
+from dataclasses import dataclass
+
+from api.models import PlayerMetadata
 from card import CardPair
 from card_pile import CardPile
 from dice import roll_collection, DiceCollectionType, create_dice_collection, Dice
@@ -5,149 +8,171 @@ from enums import GameAction, GamePhase
 from game_context import GameContext
 from player import Player
 from typing import List, Optional
-
+from api.websocket import WebSocketMessage, websocket_manager
 
 class GameManager:
-    def __init__(self, use_cli: bool = True):
+    def __init__(self, game_id: str):
+        self.game_id = game_id
         self.context = GameContext()
+        self.ready_player_count = 0
         self.game_running = False
-        self.cli = None
-        self.use_cli = use_cli
-        if use_cli:
-            try:
-                from game_cli import GameCLI
-                self.cli = GameCLI(self.context)
-            except ImportError:
-                print("Warning: GameCLI module not found. Running without CLI.")
 
-    @property
-    def card_pile(self) -> CardPile:
-        return self.context.card_pile
+    async def take_action(self,
+                    player_uuid: str,
+                    action: GameAction,
+                    player_name: Optional[str] = None,
+                    pair_index: Optional[int] = None,
+                    special_card_index: Optional[int] = None,
+                    dice_collection_type: Optional[str] = None
+                    ) -> None:
+        # if-else for each phase
+        current_phase = self.context.current_phase
+        if current_phase == GamePhase.LOBBY:
+            if action == GameAction.JOIN_GAME:
+                if len(self.context.players) < 2:
+                    if player_name:
+                        player = Player(uuid=player_uuid, player_id=len(self.context.players), name=player_name)
+                        # when the second player joined, the game phase is automatically set to GAME_START
 
-    def start_game(self):
-        """Start the game and handle the complete game flow."""
-        if not self.context or len(self.context.players) != 2:
-            raise ValueError("Game requires exactly 2 players")
-        self.game_running = True
-        # transition into GAME_INIT
-        self.context.current_phase = GamePhase.GAME_INIT
+                        player_metadata = PlayerMetadata(
+                            game_id=self.game_id,
+                            player_uuid=player.uuid,
+                            player_name=player.name,
+                            opponent_uuid=self.context.players[0].uuid if len(self.context.players) > 0 else None,
+                            opponent_name=self.context.players[0].name if len(self.context.players) > 0 else None
+                        )
+                        self.context.add_player(player)
+                        await self.notify_all("join", player_metadata.model_dump_json())
+                    else:
+                        raise ValueError("Player name and uuid required to create a player")
+                else:
+                    raise ValueError("Game already has two players")
+
+        elif current_phase == GamePhase.GAME_START:
+            if action == GameAction.READY:
+                if self.ready_player_count == 0:
+                    self.ready_player_count += 1
+                    await self.notify_all("ready", player_uuid)
+                elif self.ready_player_count == 1:
+                    self.ready_player_count = 0
+                    await self.notify_all("ready", player_uuid)
+                    self.context.initialize_game()
+
+                    player1 = self.context.player_1
+                    player2 = self.context.player_2
+                    await self.notify_all("init", f"{player1.uuid},{player2.uuid}")
 
 
+        elif current_phase == GamePhase.GAME_INIT:
+            if action == GameAction.ROLL_DICE:
+                self.context.roll_dice()
+                self.context.start_turn()
+                player1 = self.context.player_1
+                player2 = self.context.player_2
+                await self.notify(player1.uuid, "board", self.context.create_board(player1.player_id).model_dump_json())
+                await self.notify(player2.uuid, "board", self.context.create_board(player2.player_id).model_dump_json())
 
-    def process_action(self, action: GameAction) -> bool:
-        """Process a player action"""
-        if not self.context.is_valid_action(action):
-            return False
-            
-        current_player = self.context.get_current_player()
-        if not current_player:
-            return False
-            
-        if action == GameAction.JOIN_GAME:
-            if self.context.add_player(current_player):
-                print(f"Player {len(self.context.players)} joined the game")
-                return True
-                
-        elif action == GameAction.READY:
-            if self.context.current_phase == GamePhase.LOBBY:
-                if len(self.context.players) == 2:
-                    self.context.current_phase = GamePhase.GAME_START
-                    print("Both players ready - game starting")
-                    return True
-            elif self.context.current_phase == GamePhase.TURN_COMPLETE:
-                # Only the second selector can roll dice
-                if current_player == self.context.get_current_player():
+        elif current_phase == GamePhase.TURN_SELECT_FIRST:
+            if action == GameAction.SELECT_PAIR:
+                if pair_index is None:
+                    raise ValueError("Card index required to select a pair")
+                if player_uuid != self.context.first_selector.uuid:
+                    raise ValueError("Only the first selector can choose a pair now")
+                pair = self.context.available_pairs[pair_index]
+                self.context.select_pair(pair)
+                player1 = self.context.player_1
+                player2 = self.context.player_2
+                await self.notify(player1.uuid, "board", self.context.create_board(player1.player_id).model_dump_json())
+                await self.notify(player2.uuid, "board", self.context.create_board(player2.player_id).model_dump_json())
+
+        elif current_phase == GamePhase.TURN_SELECT_SECOND:
+            if action == GameAction.SELECT_PAIR:
+                if pair_index is None:
+                    raise ValueError("Card index required to select a pair")
+                if player_uuid != self.context.second_selector.uuid:
+                    raise ValueError("Only the second selector can choose a pair now")
+                pair = self.context.available_pairs[pair_index]
+                self.context.select_pair(pair)
+                player1 = self.context.player_1
+                player2 = self.context.player_2
+                await self.notify(player1.uuid, "board", self.context.create_board(player1.player_id).model_dump_json())
+                await self.notify(player2.uuid, "board", self.context.create_board(player2.player_id).model_dump_json())
+
+
+        elif current_phase == GamePhase.TURN_COMPLETE:
+            if action == GameAction.ROLL_DICE:
+                if player_uuid != self.context.dice_roller.uuid:
+                    raise ValueError("Only the dice roller can roll the dice")
+
+                if special_card_index is not None and dice_collection_type is not None:
+                    self.context.roll_dice(DiceCollectionType(dice_collection_type))
+                    player = self.context.player_1 if player_uuid == self.context.player_1.uuid else self.context.player_2
+                    seven_card = player.seven_cards[special_card_index]
+                    player.remove_seven_card(seven_card)
+                else:
                     self.context.roll_dice()
-                    return True
-                return False
-                
-        elif action == GameAction.START_GAME:
-            if self.context.current_phase == GamePhase.GAME_START:
-                self.context.current_phase = GamePhase.GAME_INIT
-                print("Game starting...")
-                return True
-                
-        elif action == GameAction.INITIALIZE_GAME:
-            if self.context.current_phase == GamePhase.GAME_INIT:
-                self.context.initialize_game()
-                print("Game initialized")
-                return True
-                
-        elif action == GameAction.SELECT_PAIR:
-            if not self.cli:
-                return False
-            pair = self.cli.select_card_pair(
-                self.context.get_available_pairs_for_p2() 
-                if self.context.current_phase == GamePhase.TURN_SELECT_SECOND
-                else self.context.available_pairs
-            )
-            if pair:
-                return self.context.select_pair(pair)
-                    
-        elif action == GameAction.COLOR_CONVERT:
-            if self.context.current_phase == GamePhase.FINAL_REVIEW:
-                # Handle color conversion logic
-                self.context.current_phase = GamePhase.GAME_END
-                return True
-                
-        elif action == GameAction.CALCULATE_SCORES:
-            if self.context.current_phase == GamePhase.GAME_END:
-                # Calculate final scores
-                return True
-                
-        elif action == GameAction.RETURN_TO_LOBBY:
-            if self.context.current_phase == GamePhase.GAME_END:
-                self.context = GameContext()  # Reset game state
-                return True
-                
-        return False
 
+                if self.context.current_phase == GamePhase.TURN_START:
+                    self.context.start_turn()
+                    player1 = self.context.player_1
+                    player2 = self.context.player_2
+                    await self.notify(player1.uuid, "board",
+                                self.context.create_board(player1.player_id).model_dump_json())
+                    await self.notify(player2.uuid, "board",
+                                self.context.create_board(player2.player_id).model_dump_json())
+                elif self.context.current_phase == GamePhase.FINAL_REVIEW:
+                    self.context.start_review()
+                    player1 = self.context.player_1
+                    player2 = self.context.player_2
+                    await self.notify(player1.uuid, "board",
+                                self.context.create_board(player1.player_id).model_dump_json())
+                    await self.notify(player2.uuid, "board",
+                                self.context.create_board(player2.player_id).model_dump_json())
 
-    def draw_pairs(self) -> List[CardPair]:
-        """Draw two pairs of cards for regular turns"""
-        pairs = []
-        for _ in range(3):
-            pair = self.context.card_pile.draw_pair()
-            if pair:
-                pairs.append(pair)
-        return pairs
+        elif current_phase == GamePhase.FINAL_REVIEW:
+            if action == GameAction.COLOR_CONVERT:
+                if special_card_index is None:
+                    raise ValueError("Special card index required to convert color")
+                if pair_index is None:
+                    raise ValueError("Pair index required to convert color")
+                player = self.context.player_1 if player_uuid == self.context.player_1.uuid else self.context.player_2
+                self.context.convert_color(player.player_id, pair_index, special_card_index)
+                await self.notify(player_uuid, "board", self.context.create_board(player.player_id).model_dump_json())
 
-    def add_player(self, player: Player) -> bool:
-        """Add a player to the game"""
-        if len(self.context.players) < 2:
-            self.context.players.append(player)
-            if len(self.context.players) == 2:
-                self.context.current_phase = GamePhase.GAME_START
-            return True
-        return False
+            elif action == GameAction.END_REVIEW:
+                if self.ready_player_count == 0:
+                    self.ready_player_count += 1
+                    await self.notify_all("end", player_uuid)
+                elif self.ready_player_count == 1:
+                    self.ready_player_count = 0
+                    self.context.end_review()
 
-    def initialize_game(self) -> None:
-        self.context.initialize_game()
+                    # send over the final result
+                    await self.notify_all("result", self.context.calculate_final_results().model_dump_json())
 
-    def roll_dice(self, dice_type: DiceCollectionType = DiceCollectionType.REGULAR, special_card_index: Optional[int] = None) -> None:
-        """Roll dice for current player"""
-        self.context.roll_dice(dice_type)
+        elif current_phase == GamePhase.GAME_END:
+            if action == GameAction.READY:
+                if self.ready_player_count == 0:
+                    self.ready_player_count += 1
+                    await self.notify_all("ready", player_uuid)
+                elif self.ready_player_count == 1:
+                    self.ready_player_count = 0
+                    self.context.initialize_game()
+                    await self.notify_all("ready", player_uuid)
 
-        if special_card_index is not None:
-            special_card = self.context.dice_roller.seven_cards[special_card_index]
-            self.context.dice_roller.use_seven_card(special_card)
+        else:
+            await self.notify_all("error", player_uuid)
 
-    def start_turn(self) -> None:
-        """Start a new turn"""
-        self.context.start_turn()
+    async def notify(self, player_uuid: str, message_type: str, message: str) -> None:
+        await websocket_manager.send(self.game_id, [player_uuid], message_type, message)
 
-    def select_pair(self, card_index: int) -> bool:
-        """Select a card pair for the current turn"""
-        if not self.context.available_pairs or card_index >= len(self.context.available_pairs):
-            return False
-        return self.context.select_pair(self.context.available_pairs[card_index])
+    async def notify_all(self, message_type: str, message: str) -> None:
+        await websocket_manager.send(self.game_id, None, message_type, message)
 
-    def end_review(self) -> None:
-        """End the final review phase"""
-        self.context.end_review()
-
-    def calculate_final_results(self) -> dict:
-        """Calculate final scores and determine the winner"""
-        return self.context.calculate_final_results()
+    def get_player_uuid(self, player_id: int) -> str:
+        for player in self.context.players:
+            if player.player_id == player_id:
+                return player.uuid
+        raise ValueError("Player not found")
 
         

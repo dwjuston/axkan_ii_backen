@@ -8,115 +8,108 @@ from card import Card, CardPair
 from portfolio import Portfolio
 
 
-class Player(BaseModel):
-    player_id: str
-    portfolio: Portfolio = Field(default_factory=Portfolio)
-    has_selected: bool = False  # Track if player has made their selection for current turn
-    current_score: int = 0  # Track player's current score
+class OpponentView(BaseModel):
+    uuid: str
+    name: str
+    player_id: int
+    selected_pairs: List[CardPair]
+    seven_cards: List[Card]
+    pnl: int
+    cost: int
+    value: int
 
-    @property
-    def cost(self) -> int:
-        """Get total cost of selected pairs."""
-        return self.portfolio.get_total_cost()
+class PlayerView(BaseModel):
+    uuid: str
+    player_id: int
+    name: str
+    selected_pairs: List[CardPair]
+    seven_cards: List[Card]
+    hidden_pair: Optional[CardPair]
+    pnl: int
+    cost: int
+    value: int
+
+class Player(BaseModel):
+    uuid: str = Field(default_factory=str)
+    player_id: int = Field(default_factory=int)
+    name: str = Field(default_factory=str)
+    portfolio: Portfolio = Field(default_factory=Portfolio)
 
     @property
     def selected_pairs(self) -> List[CardPair]:
         """Get list of selected pairs."""
-        return self.portfolio.get_selected_pairs()
+        return self.portfolio.regular_pairs
     
     @property
     def seven_cards(self) -> List[Card]:
         """Get list of seven cards."""
-        return self.portfolio.get_seven_cards()
+        return self.portfolio.seven_cards
     
     @property
-    def hidden_pairs(self) -> List[CardPair]:
+    def hidden_pair(self) -> Optional[CardPair]:
         """Get list of hidden pairs."""
-        return self.portfolio.get_hidden_pairs()
+        return self.portfolio.hidden_pairs[0] if len(self.portfolio.hidden_pairs) > 0 else None
     
-    def select_pair(self, pair: CardPair) -> bool:
-        """
-        Select a pair for the current turn.
-        
-        Args:
-            pair: The card pair to select
-            
-        Returns:
-            bool: True if selection was successful, False otherwise
-        """
-        if not self.is_valid_selection(pair):
-            return False
+    def select_pair(self, pair: CardPair) -> None:
         self.portfolio.add_pair(pair)
-        self.has_selected = True
-        return True
     
-    def use_seven_card(self, special_card: Card) -> Optional[Card]:
-        """
-        Use a seven card for special actions.
-        
-        Returns:
-            Optional[Card]: The seven card if available, None otherwise
-        """
-        if not self.portfolio.has_seven_card():
-            return None
-        return self.portfolio.use_seven_card(special_card)
+    def remove_seven_card(self, special_card: Card) -> None:
+        self.portfolio.remove_seven_card(special_card)
     
     def convert_card_color(self, pair: CardPair, special_card_index: int) -> bool:
-        """
-        Convert color of a card using seven card.
-        
-        Args:
-            pair: The card pair to convert
-            special_card_index: Index of the special card
-            
-        Returns:
-            bool: True if conversion was successful, False otherwise
-        """
-
         special_card = self.seven_cards[special_card_index]
-
         # Find the pair in the portfolio
-        pairs = self.portfolio.get_selected_pairs()
+        pairs = self.portfolio.regular_pairs
         for i, p in enumerate(pairs):
             if p == pair:
                 self.portfolio.convert_pair_color(i)
-                self.portfolio.use_seven_card(special_card)
+                self.portfolio.remove_seven_card(special_card)
                 return True
                 
         # Check hidden pair
-        hidden_pairs = self.portfolio.get_hidden_pairs()
-        if hidden_pairs and hidden_pairs[0] == pair:
+        hidden_pairs = self.portfolio.hidden_pairs
+        if pair in hidden_pairs:
             self.portfolio.convert_pair_color(-1)  # -1 for hidden pair
-            self.portfolio.use_seven_card(special_card)
+            self.portfolio.remove_seven_card(special_card)
             return True
             
         return False
     
-    def get_pnl(self, stock_price: int) -> int:
+    def get_pnl(self, stock_price: int, include_hidden: bool = True) -> int:
         """Get player's PnL."""
-        return self.portfolio.get_pnl(stock_price)
-    
-    def is_valid_selection(self, pair: CardPair) -> bool:
-        """
-        Validate if pair selection is valid.
-        
-        Args:
-            pair: The card pair to validate
-            
-        Returns:
-            bool: True if selection is valid, False otherwise
-        """
-        return pair is not None and not self.has_selected
-    
-    def reset_turn_state(self):
-        """Reset player's state for the next turn."""
-        self.has_selected = False 
-    
-    def recalculate_score(self, stock_price: int) -> None:
-        """
-        Recalculate player's score based on current stock price.
-        
-        Args:
-            stock_price: Current stock price
-        """
-        self.current_score = self.portfolio.get_pnl(stock_price) 
+        return self.portfolio.get_pnl(stock_price, include_hidden)
+
+    def get_cost(self, include_hidden: bool = True) -> int:
+        """Get player's total cost."""
+        return self.portfolio.get_cost(include_hidden)
+
+    def get_value(self, stock_price: int, include_hidden: bool = True) -> int:
+        """Get player's total value."""
+        return self.portfolio.get_value(stock_price, include_hidden)
+
+    def get_player_view(self, stock_price: Optional[int]) -> PlayerView:
+        """Get player's view."""
+        return PlayerView(
+            uuid=self.uuid,
+            player_id=self.player_id,
+            name=self.name,
+            selected_pairs=self.selected_pairs,
+            seven_cards=self.seven_cards,
+            hidden_pair=self.hidden_pair,
+            pnl=self.get_pnl(stock_price) if stock_price else 0,
+            cost=self.get_cost(),
+            value=self.get_value(stock_price) if stock_price else 0
+        )
+
+    def get_opponent_view(self, stock_price: Optional[int]) -> OpponentView:
+        """Get player's view."""
+        return OpponentView(
+            uuid=self.uuid,
+            name=self.name,
+            player_id=self.player_id,
+            selected_pairs=self.selected_pairs,
+            seven_cards=self.seven_cards,
+            pnl=self.get_pnl(stock_price, False) if stock_price else 0,
+            cost=self.get_cost(False),
+            value=self.get_value(stock_price, False) if stock_price else 0
+        )

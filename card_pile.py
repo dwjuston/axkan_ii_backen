@@ -9,15 +9,11 @@ from card import Card, CardPair, CardSuit, CardRank, CardType
 
 
 class CardPile(BaseModel):
-    draw_pile: Dict[CardSuit, SortedList[Card]] = Field(default_factory=lambda: {
-        suit: SortedList(key=lambda c: c.rank.value) for suit in CardSuit
-    })
+    small_card_draw_pile: list[Card] = Field(default_factory=list)
+    big_card_draw_pile: list[Card] = Field(default_factory=list)
     discard_pile: List[Card] = Field(default_factory=list)
     initial_seven_cards: List[Card] = Field(default_factory=list)
-    
-    class Config:
-        arbitrary_types_allowed = True
-    
+
     def __init__(self, **data):
         super().__init__(**data)
         self._initialize_piles()
@@ -27,14 +23,14 @@ class CardPile(BaseModel):
         # Create all possible cards
         for suit in CardSuit:
             for rank in CardRank:
-                if rank != CardRank.SEVEN:  # Skip seven cards
-                    # Add regular cards to draw pile
-                    card_type = CardType.SMALL if rank.value <= 6 else CardType.BIG
-                    card = Card(suit=suit, rank=rank, card_type=card_type)
-                    self.draw_pile[suit].add(card)
+                card = Card(suit=suit, rank=rank)
+                if card.card_type == CardType.SMALL:
+                    self.small_card_draw_pile.append(card)
+                elif card.card_type == CardType.BIG:
+                    self.big_card_draw_pile.append(card)
 
         # Save initial seven cards, directly create cards
-        self.initial_seven_cards = [Card(suit=suit, rank=CardRank.SEVEN, card_type=CardType.SPECIAL) for suit in CardSuit]
+        self.initial_seven_cards = [Card(suit=suit, rank=CardRank.SEVEN) for suit in CardSuit]
 
     def draw_seven_cards(self) -> List[Card]:
         """
@@ -52,22 +48,18 @@ class CardPile(BaseModel):
         Draw a pair of cards (one big, one small).
         
         Returns:
-            Optional[CardPair]: A card pair if available, None if draw pile is empty
+            CardPair
         """
+        # Check if draw pile is empty
+        if not self.small_card_draw_pile or not self.big_card_draw_pile:
+            return None
+
         # Find a suit with both small and big cards
-        for suit, cards in self.draw_pile.items():
-            small_cards = [c for c in cards if c.card_type == CardType.SMALL]
-            big_cards = [c for c in cards if c.card_type == CardType.BIG]
-            
-            if small_cards and big_cards:
-                # Draw one of each
-                small_card = small_cards[0]
-                big_card = big_cards[0]
-                cards.remove(small_card)
-                cards.remove(big_card)
-                return CardPair(small_card=small_card, big_card=big_card)
-        
-        return None
+        small_card_rand_idx = random.randint(0, len(self.small_card_draw_pile) - 1)
+        small_card = self.small_card_draw_pile.pop(small_card_rand_idx)
+        big_card_rand_idx = random.randint(0, len(self.big_card_draw_pile) - 1)
+        big_card = self.big_card_draw_pile.pop(big_card_rand_idx)
+        return CardPair(small_card=small_card, big_card=big_card)
     
     def discard_pair(self, pair: CardPair):
         """
@@ -88,17 +80,13 @@ class CardPile(BaseModel):
     @property
     def draw_pile_size(self) -> int:
         """Get number of cards in draw pile."""
-        return sum(len(cards) for cards in self.draw_pile.values())
+        return len(self.small_card_draw_pile) + len(self.big_card_draw_pile)
     
     @property
     def discard_pile_size(self) -> int:
         """Get number of cards in discard pile."""
         return len(self.discard_pile)
-    
-    def get_draw_pile(self) -> Dict[CardSuit, List[Card]]:
-        """Get copy of draw pile."""
-        return {suit: cards.copy() for suit, cards in self.draw_pile.items()}
-    
+
     def get_discard_pile(self) -> List[Card]:
         """Get copy of discard pile."""
         return self.discard_pile.copy()
